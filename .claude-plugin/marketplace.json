@@ -1,0 +1,12 @@
+{
+  "name": "amel-solutions",
+  "description": "Claude Code mods and plugins from Amel Solutions",
+  "owner": { "name": "Amel Solutions" },
+  "plugins": [
+    {
+      "name": "effortlevelmod",
+      "source": "./plugins/effortlevelmod",
+      "description": "Which effort level fits your project and each task, shown above the prompt"
+    }
+  ]
+}

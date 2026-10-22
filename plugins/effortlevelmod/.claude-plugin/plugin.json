@@ -1,0 +1,11 @@
+{
+  "name": "effortlevelmod",
+  "version": "0.1.0",
+  "description": "Tells you which effort level fits your project and each task, above the prompt, and compares it with the level you're running.",
+  "author": { "name": "Amel Solutions" },
+  "homepage": "https://github.com/ydarwish1/effortlevelmod",
+  "repository": "https://github.com/ydarwish1/effortlevelmod",
+  "license": "MIT",
+  "keywords": ["effort", "mod", "opus", "tokens", "productivity"],
+  "icon": "./.claude-plugin/icon.png"
+}

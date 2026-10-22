@@ -1,0 +1,4 @@
+{
+  "description": "The effortlevelmod hooks module",
+  "modules": ["./effortlevelmod.mjs"]
+}
