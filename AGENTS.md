@@ -2,7 +2,7 @@
 
 This file is for an AI agent (Claude Code, Codex, Cursor or similar) that a person has asked to install effortlevelmod. Follow the steps in order. Each step says how to check it worked. Tell the person what you did at the end.
 
-effortlevelmod is a Claude Code mod: a plugin with a hooks module. It shows which effort level fits the project and the current task above the Claude Code prompt, and adds an `/effortlevel` command. It only advises: it never changes the effort level.
+effortlevelmod is a Claude Code mod: a plugin with a hooks module. It rates each task the person sends with a small, fast model (Haiku), and shows the effort level that fits and a short reason above the Claude Code prompt. It also adds an `/effortlevel` command. It only advises: it never changes the effort level.
 
 - Repository: `https://github.com/ydarwish1/effortlevelmod`
 - Marketplace name: `amel-solutions`
@@ -50,22 +50,22 @@ claude plugin list
 
 **Check:** the list shows `effortlevelmod@amel-solutions` with `Status: ✔ enabled`.
 
-Then run the mod's command once from inside the person's project folder. It answers without calling a model:
+Then rate one task from inside the person's project folder. This makes one small Haiku call:
 
 ```bash
 cd <the person's project>
-claude -p "/effortlevel"
+claude -p "/effortlevel fix the typo in the README"
 ```
 
-**Check:** the output starts with `effortlevelmod: This project suits` followed by a level, then the reasons. In a folder the person hasn't trusted yet, mods don't load: open `claude` there once and accept the trust prompt, then run it again.
+**Check:** the output starts with `effortlevelmod: "fix the typo in the README" suits low effort.`, then a `why:` line. If a line says `rated by word rules`, the Haiku call failed: see [Troubleshooting](#troubleshooting). In a folder the person hasn't trusted yet, mods don't load: open `claude` there once and accept the trust prompt, then run it again.
 
 ## Step 4: tell the person
 
 Tell them:
 
-1. It's installed, and which level it gave their project, from Step 3's output.
-2. Start a new Claude Code session. The line above the prompt reads like `◆ Effort  project high · this task low · running high → /effort low saves tokens`.
-3. `/effortlevel` explains the level. `/effortlevel <task>` rates a task before they send it.
+1. It's installed, and the level and reason Step 3 gave.
+2. Start a new Claude Code session. After each message, the line above the prompt reads like `◆ Effort  this task low  ·  running high → /effort low saves tokens`, with the reason on the line below it.
+3. `/effortlevel` shows the last rating and when each level fits. `/effortlevel <task>` rates a task before they send it.
 4. It only suggests. They switch with `/effort <level>`.
 
 ## Update or remove
@@ -85,7 +85,8 @@ claude plugin uninstall effortlevelmod@amel-solutions
 | A clone or auth error on `marketplace add` | GitHub isn't reachable or git isn't installed. Check `git --version` and the network, then retry. |
 | Installed, but `/effortlevel` is an unknown command | The mod didn't load. Check the version (2.1.287+), that the session isn't started with `--bare` or `--safe-mode`, that `disableAllHooks` isn't set in settings, and that the folder is trusted. Run `claude --debug` and look for lines that name `effortlevelmod`. |
 | `hooks modules are turned off` | The person's organization blocks user-installed mods through managed settings. Stop and tell the person. Don't try to get around it. |
-| The project level looks wrong | Run `/effortlevel` to see the reasons. The rules read file names and prompt words. They live in `plugins/effortlevelmod/hooks/rules.mjs` if the person wants to change them. |
+| The reason starts with `word rules:` | The Haiku call failed (no network, Haiku blocked by the organization's model allowlist, or an API error), so the backup word rules rated the task. Check that `claude -p "say hi" --model haiku` answers. |
+| A rating looks wrong | Run `/effortlevel` to see the reason. Haiku rates each task with the brief `RATER` in `plugins/effortlevelmod/hooks/rules.mjs`, which the person can change. |
 
 ## For agents working on this repository
 
@@ -93,6 +94,7 @@ claude plugin uninstall effortlevelmod@amel-solutions
 - Run the tests: `cd plugins/effortlevelmod && claude plugin test`. All must pass before a change is done.
 - Try it live: `claude --plugin-dir ./plugins/effortlevelmod`. The mod hot-reloads when its files change.
 - Keep `hooks/rules.mjs` free of mods API calls, so the rules stay plain functions that tests import directly.
-- In `hooks/effortlevelmod.mjs`, write every mods API call in full (`$.session.cwd()`, never `const s = $.session`), because Claude Code finds hooks and calls by reading the source.
+- In `hooks/effortlevelmod.mjs`, write every mods API call in full (`$.model.complete(...)`, never `const m = $.model`), because Claude Code finds hooks and calls by reading the source.
+- A change to `RATER` is a change to every rating. Run it on real tasks before you ship it, with `claude -p "/effortlevel <task>" --plugin-dir ./plugins/effortlevelmod`.
 - Bump `version` in `plugins/effortlevelmod/.claude-plugin/plugin.json` and add a line to `CHANGELOG.md` for each release, because installed copies are cached by version.
 - The mod's events and methods are documented at https://code.claude.com/docs/en/plugins/mods/reference.

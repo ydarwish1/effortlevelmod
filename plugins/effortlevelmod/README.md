@@ -1,6 +1,6 @@
 # effortlevelmod
 
-Shows which effort level fits your project and each task above the Claude Code prompt, and compares it with the level you're running. Advice only: it never changes your effort.
+Rates each task you send with Haiku and shows the effort level that fits, and why, above the Claude Code prompt, next to the level you're running. Advice only: it never changes your effort.
 
 ```text
 /plugin install effortlevelmod --marketplace ydarwish1/effortlevelmod

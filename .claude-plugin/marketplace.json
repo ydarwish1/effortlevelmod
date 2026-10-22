@@ -6,7 +6,7 @@
     {
       "name": "effortlevelmod",
       "source": "./plugins/effortlevelmod",
-      "description": "Which effort level fits your project and each task, shown above the prompt"
+      "description": "Which effort level fits each task you send, and why, shown above the prompt"
     }
   ]
 }

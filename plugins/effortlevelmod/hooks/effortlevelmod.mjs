@@ -1,25 +1,31 @@
-// effortlevelmod: tells you which effort level fits this project and the task
-// you just gave Claude, and how that compares with the level you're running.
+// effortlevelmod: tells you which effort level fits the task you just gave
+// Claude, why, and how that compares with the level you're running.
 //
-// session.start: adds /effortlevel, then reads the project's file list
-//   (git ls-files, or find outside git) and sets a baseline level.
-// prompt.submit: rates the prompt you sent. Observe only: the prompt goes on unchanged.
+// session.start: adds /effortlevel.
+// prompt.submit: starts a rating of the prompt you sent. Observe only: the
+//   prompt goes on unchanged and never waits for the rating.
+// turn.complete: keeps the end of Claude's last reply, so "yes, do it" is
+//   rated as the work it approves.
 // turn.step: notes the effort level each main-loop request runs at. Observe only:
 //   the mod never changes your effort, because a change mid-session can cost
 //   you the prompt cache. You switch with /effort when you agree.
-// ui.render (AbovePrompt): one line above the prompt.
+// ui.render (AbovePrompt): the level and the reason, above the prompt.
 // command.run (/effortlevel): the full report, or a rating for the text after it.
+//
+// A rating is one Haiku call with the brief in rules.mjs. When that call
+// fails, the word rules in rules.mjs rate the task instead.
 //
 // The host reads on(...) and $.noun.method(...) from source, so they are
 // spelled literally, and helpers that take $ are top-level functions.
 
-import { LEVELS, WHEN, compare, profileProject, rateTask } from './rules.mjs'
+import { LEVELS, RATER, WHEN, clipWords, compare, parseRating, raterPrompt, rateTask } from './rules.mjs'
 
 const COLORS = { low: 'green', medium: 'cyan', high: 'yellow', xhigh: 'magenta', max: 'red' }
 
-let project = null // profileProject(...) result
-let task = null // { text, level, reasons } for the last prompt
+let task = null // { text, pending } while rating, then { text, level, why, by }
 let running = null // the effort level of the last main-loop request
+let lastReply = '' // the end of Claude's last main-loop reply
+let rating = 0 // counts prompts, so a slow rating never replaces a newer one
 
 /** @param {import('claude-code').On} on */
 export function register(on) {
@@ -27,7 +33,7 @@ export function register(on) {
     try {
       await $.command.register({
         name: 'effortlevel',
-        description: 'Which effort level fits this project, or the task you type after it',
+        description: 'Which effort level fits your last task, or the task you type after it, and why',
         argumentHint: '[task]',
         immediate: true,
       })
@@ -35,24 +41,31 @@ export function register(on) {
       // The name is taken; the band still works.
     }
     const result = await next(e)
-    project = null
     task = null
-    await scanProject($)
+    lastReply = ''
     return result
   })
 
   on('prompt.submit', async ($, e, next) => {
     const text = String(e.text || '')
-    if (!text.startsWith('/')) {
-      const rated = rateTask(text, project)
-      if (rated) {
-        task = { text, ...rated }
-        $.ui.invalidate('ui.render')
-      }
+    if (text.trim() && !text.startsWith('/') && !e.isMeta) {
+      const mine = ++rating
+      const reply = lastReply
+      task = { text, pending: true }
+      $.ui.invalidate('ui.render')
+      // The rating outlives this hook, so it runs in a timer's dispatch of its own.
+      $.clock.after(1, () => rateLater($, mine, text, reply))
     }
     return next(e)
   }).catch(async ($, e, next) => {
     // Advice must never block a prompt: if rating fails, send the prompt as typed.
+    return next(e)
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    if (!e.agentId && typeof e.answer === 'string' && e.answer.trim()) {
+      lastReply = e.answer.slice(-600)
+    }
     return next(e)
   })
 
@@ -66,7 +79,7 @@ export function register(on) {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const props = e.props
-    if (!props || props.hasSurvey || !project) {
+    if (!props || props.hasSurvey) {
       return next(e)
     }
     const { Box, Text } = $.ui.resolve(e)
@@ -77,92 +90,118 @@ export function register(on) {
 
   on('command.run', { command: 'effortlevel' }, async ($, e) => {
     const args = String(e.args || '').trim()
-    if (!project) {
-      await scanProject($)
+    if (!args) {
+      return { text: report() }
     }
-    return { text: args ? forTask(args) : report() }
+    const rated = await rateWithModel($, args, lastReply)
+    return { text: forTask(args, rated) }
   })
 }
 
-async function scanProject($) {
-  try {
-    const cwd = await $.session.cwd()
-    let out = await $.process.run(['git', 'ls-files'], { cwd, timeoutMs: 15000 })
-    if (out.exitCode !== 0) {
-      out = await $.process.run(
-        ['find', '.', '-type', 'f', '-not', '-path', '*/.git/*', '-not', '-path', '*/node_modules/*'],
-        { cwd, timeoutMs: 15000 },
-      )
-    }
-    const paths = out.exitCode === 0 ? out.stdout.split('\n').slice(0, 50000) : []
-    project = profileProject(paths)
-  } catch {
-    project = profileProject([])
-  }
+/**
+ * @param {import('claude-code').EngineInterface} $
+ * @param {number} mine
+ * @param {string} text
+ * @param {string} reply
+ */
+async function rateLater($, mine, text, reply) {
+  const rated = await rateWithModel($, text, reply)
+  if (mine !== rating) return
+  task = { text, ...rated }
   $.ui.invalidate('ui.render')
 }
 
-// The band: what the project suits, what the last task suits, what you're on.
+// One Haiku call; the word rules when it fails or answers something unreadable.
+/**
+ * @param {import('claude-code').EngineInterface} $
+ * @param {string} text
+ * @param {string} reply
+ */
+async function rateWithModel($, text, reply) {
+  try {
+    const answer = await $.model.complete({
+      model: 'haiku',
+      system: RATER,
+      prompt: raterPrompt(text, reply),
+      maxTokens: 200,
+      effort: 'low',
+      timeoutMs: 20000,
+    })
+    const rated = answer.isAnswered ? parseRating(answer.text) : null
+    if (rated) return { ...rated, by: 'model' }
+  } catch {
+    // A refused request: fall through to the rules.
+  }
+  return { ...rateTask(text), by: 'rules' }
+}
+
+// The band: this task's level and why, and what you're running.
 function band(Box, Text, columns) {
-  const want = task ? task.level : project.level
-  const parts = [Text({ bold: true, children: '◆ Effort ' })]
-  parts.push(Text({ dimColor: true, children: ' project ' }))
-  parts.push(Text({ color: COLORS[project.level], bold: true, children: project.level }))
-  if (task) {
-    parts.push(Text({ dimColor: true, children: '  ·  this task ' }))
-    parts.push(Text({ color: COLORS[task.level], bold: true, children: task.level }))
+  const head = [Text({ bold: true, children: '◆ Effort ' })]
+  const done = task && !task.pending ? task : null
+  if (!task) {
+    head.push(Text({ dimColor: true, children: columns >= 70 ? ' rates each task you send  ·  /effortlevel <task> rates one first' : ' rates each task you send' }))
+  } else if (!done) {
+    head.push(Text({ dimColor: true, children: ' rating this task…' }))
+  } else {
+    head.push(Text({ dimColor: true, children: ' this task ' }))
+    head.push(Text({ color: COLORS[done.level], bold: true, children: done.level }))
   }
   if (running !== null) {
-    parts.push(Text({ dimColor: true, children: '  ·  running ' }))
-    parts.push(Text({ children: String(running) }))
-    const c = compare(want, running)
+    head.push(Text({ dimColor: true, children: '  ·  running ' }))
+    head.push(Text({ children: String(running) }))
+    const c = done ? compare(done.level, running) : 'unknown'
     if (c === 'match') {
-      parts.push(Text({ color: 'green', children: ' ✓' }))
+      head.push(Text({ color: 'green', children: ' ✓' }))
     } else if (c !== 'unknown') {
-      const tip = c === 'above' ? ' → /effort ' + want + ' saves tokens' : ' → try /effort ' + want
-      parts.push(Text({ color: COLORS[want], children: columns >= 70 ? tip : ' → ' + want }))
+      const tip = c === 'above' ? ' → /effort ' + done.level + ' saves tokens' : ' → try /effort ' + done.level
+      head.push(Text({ color: COLORS[done.level], children: columns >= 70 ? tip : ' → ' + done.level }))
     }
-  } else if (columns >= 70) {
-    parts.push(Text({ dimColor: true, children: '  ·  /effortlevel for why' }))
   }
-  return Box({ flexDirection: 'row', paddingX: 1, children: parts })
+  const rows = [Box({ flexDirection: 'row', paddingX: 1, children: head })]
+  if (done) {
+    const why = (done.by === 'rules' ? 'word rules: ' : '') + done.why
+    rows.push(Box({ flexDirection: 'row', paddingX: 3, children: [Text({ dimColor: true, children: clipWords(why, Math.max(20, columns - 6)) })] }))
+  }
+  return Box({ flexDirection: 'column', children: rows })
 }
 
 function report() {
   const lines = []
-  lines.push(`This project suits ${project.level} effort.`)
-  for (const r of project.reasons) lines.push(`  - ${r}`)
-  if (project.langs.length) lines.push(`  - mostly ${project.langs.join(', ')}`)
-  if (task) {
-    lines.push('')
-    lines.push(`Your last task suits ${task.level}: "${clip(task.text)}"`)
-    for (const r of task.reasons) lines.push(`  - ${r}`)
+  const done = task && !task.pending ? task : null
+  if (done) {
+    lines.push(`Your last task suits ${done.level} effort: "${clip(done.text, 60)}"`)
+    lines.push(`  why: ${done.why}`)
+    if (done.by === 'rules') lines.push('  (rated by word rules: the rating model was not reachable)')
+  } else if (task) {
+    lines.push(`Your last task is still being rated: "${clip(task.text, 60)}"`)
+  } else {
+    lines.push('No task rated yet. Send one, or type /effortlevel <task> to rate it first.')
   }
   lines.push('')
   lines.push(running !== null ? `You're running ${running}.` : 'Your running level shows after your first prompt.')
-  const want = task ? task.level : project.level
-  if (running !== null && compare(want, running) !== 'match' && compare(want, running) !== 'unknown') {
-    lines.push(`Switch with /effort ${want} (or press s in the /effort slider for this session only).`)
+  if (done && running !== null && compare(done.level, running) !== 'match' && compare(done.level, running) !== 'unknown') {
+    lines.push(`Switch with /effort ${done.level} (or press s in the /effort slider for this session only).`)
   }
   lines.push('')
   lines.push('When each level fits:')
   for (const l of LEVELS) lines.push(`  ${l.padEnd(6)} ${WHEN[l]}`)
   lines.push('')
   lines.push('For one hard prompt, add the word ultrathink instead of switching. Changing effort mid-session can cost you the prompt cache.')
-  lines.push('This is a rule of thumb from your files and your words. You know the job better.')
+  lines.push('Haiku rates each task from your words and the end of Claude\'s last reply. You know the job better.')
   return lines.join('\n')
 }
 
-function forTask(text) {
-  const rated = rateTask(text, project)
-  const lines = [`"${clip(text)}" suits ${rated.level} effort.`]
-  for (const r of rated.reasons) lines.push(`  - ${r}`)
-  lines.push(`  - ${rated.level}: ${WHEN[rated.level]}`)
+function forTask(text, rated) {
+  const lines = [`"${clip(text, 60)}" suits ${rated.level} effort.`]
+  lines.push(`  why: ${rated.why}`)
+  if (rated.by === 'rules') lines.push('  (rated by word rules: the rating model was not reachable)')
+  lines.push(`  ${rated.level}: ${WHEN[rated.level]}`)
   lines.push(`Switch with /effort ${rated.level}.`)
   return lines.join('\n')
 }
 
-function clip(text) {
+function clip(text, max) {
   const t = text.replace(/\s+/g, ' ').trim()
-  return t.length > 60 ? t.slice(0, 57) + '...' : t
+  return t.length > max ? t.slice(0, max - 3) + '...' : t
 }

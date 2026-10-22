@@ -1,7 +1,7 @@
 {
   "name": "effortlevelmod",
-  "version": "0.1.0",
-  "description": "Tells you which effort level fits your project and each task, above the prompt, and compares it with the level you're running.",
+  "version": "0.2.0",
+  "description": "Rates each task you send with Haiku and shows the effort level that fits, and why, above the prompt, next to the level you're running.",
   "author": { "name": "Amel Solutions" },
   "homepage": "https://github.com/ydarwish1/effortlevelmod",
   "repository": "https://github.com/ydarwish1/effortlevelmod",
