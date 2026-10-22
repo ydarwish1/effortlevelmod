@@ -82,7 +82,7 @@ To switch it off without removing it, run `/plugin`, open the **Installed** tab 
 ## Limits
 
 - Each message you send makes one small Haiku call (about 1,050 tokens in and 40 out). It counts toward your plan or API usage. Slash commands are not rated.
-- The rating takes a few seconds. Until then the line says `rating this task…`.
+- The rating takes a second or two (1.0 to 1.6 seconds in tests). Until then the line says `rating this task…`.
 - Haiku sees your message and the end of Claude's last reply, not your code. A level can land one off. You know the job better.
 - The running level shows after your first prompt, because Claude Code reports it per request.
 - Mods don't load with `--bare` or `--safe-mode`, with `disableAllHooks` set, in a workspace you haven't trusted, or when your organization blocks them.
