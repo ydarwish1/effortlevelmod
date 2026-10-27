@@ -2,7 +2,7 @@
 
 This file is for an AI agent (Claude Code, Codex, Cursor or similar) that a person has asked to install effortlevelmod. Follow the steps in order. Each step says how to check it worked. Tell the person what you did at the end.
 
-effortlevelmod is a Claude Code mod: a plugin with a hooks module. It rates each task the person sends with a small, fast model (Haiku), and shows the effort level that fits and a short reason above the Claude Code prompt. It also adds an `/effortlevel` command. It only advises: it never changes the effort level.
+effortlevelmod is a Claude Code mod: a plugin with a hooks module. It rates each task the person sends with a small, fast model (Haiku), and shows the effort level that fits and a short reason above the Claude Code prompt. It also adds an `/effortlevel` command, and an Ultrathink button (and `/ultra`) that runs the next message, or the rest of the current turn, at xhigh effort when the person presses it. On its own it never changes the effort level.
 
 - Repository: `https://github.com/ydarwish1/effortlevelmod`
 - Marketplace name: `amel-solutions`
@@ -66,6 +66,7 @@ Tell them:
 1. It's installed, and the level and reason Step 3 gave.
 2. Start a new Claude Code session. After each message, the line above the prompt reads like `◆ Effort  this task low  ·  running high → /effort low saves tokens`, with the reason on the line below it.
 3. `/effortlevel` shows the last rating and when each level fits. `/effortlevel <task>` rates a task before they send it.
+4. The ⚡ Ultrathink button under the line (or `/ultra`) runs their next message at xhigh effort; pressed while Claude works, it raises the rest of that turn.
 4. It only suggests. They switch with `/effort <level>`.
 
 ## Update or remove

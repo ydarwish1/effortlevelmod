@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0 (2026-10-27)
+
+- An **⚡ Ultrathink** button under the line above the prompt, in the terminal and the Desktop app. Before you send, it runs your next message at `xhigh`; while Claude works, it raises the rest of that turn. Press again to cancel. In the terminal, type `0` into an empty prompt to press it.
+- `/ultra` does the same from the command line, for the VS Code extension and anywhere the line isn't drawn.
+- The boost never lowers your level, gives Opus 4.6 and Sonnet 4.6 `high`, leaves models without effort and subagents alone, and doesn't change what you typed or your `/effort` setting.
+- When Haiku rates a running task `xhigh` or `max`, the line points at the button.
+- 7 new tests (19 in all). Checked on Claude Code 2.1.312.
+
 ## 0.2.0 (2026-10-22)
 
 - Haiku now rates each task you send, with a reason of about ten words, shown on a second line above the prompt. The old word rules rated 18 of 25 test tasks `high`; the new rating got 25 of 25 within the expected range, and 15 of 15 on a second set of tasks.

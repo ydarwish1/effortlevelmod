@@ -232,3 +232,148 @@ test('a narrow band keeps the short form', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: 'a rewrite across the whole app, touching…' })).toBeDefined()
   await ui.unmount()
 })
+
+// Ultrathink: stubs that record the effort each request is sent at.
+function ultraStubs(on) {
+  const sent: { turnId: string; effort: unknown }[] = []
+  mock.clock(on)
+  on('session.start', () => ({ cwd: '/work' }))
+  on('command.register', () => ({ value: undefined }))
+  on('ui.invalidate', () => ({ value: undefined }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('prompt.submit', ($, e) => ({ text: e.text }))
+  on('turn.start', ($, e) => ({ turnId: e.turnId }))
+  on('turn.complete', ($, e) => ({ text: e.answer }))
+  on('turn.step', async function* ($, e) {
+    sent.push({ turnId: e.turnId, effort: e.effort })
+    return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: null }
+  })
+  on('ui.render', () => ({ type: 'Text', props: {}, children: ['other mods'] }))
+  on('model.complete', () => ({ value: { isAnswered: true, text: rated('medium', 'a scoped change'), usage: USAGE } }))
+  return sent
+}
+
+async function step($, turnId: string, effort: unknown, model = 'claude-opus-5-5') {
+  const stream = $.turn.step({ turnId, index: 0, model, messageCount: 1, effort })
+  let s = await stream.next()
+  while (s.done !== true) s = await stream.next()
+}
+
+async function turn($, turnId: string, text: string, effort: unknown, model = 'claude-opus-5-5') {
+  await $.prompt.submit({ text })
+  await $.turn.start({ turnId })
+  await step($, turnId, effort, model)
+  await $.turn.complete({ turnId, answer: 'done', durationMs: 10, isAborted: false, usage: null })
+}
+
+const WORKING = { ...BAND, props: { ...BAND.props, isWorking: true } }
+
+test('Ultrathink, pressed before you send, runs only your next message at xhigh', async ($, on) => {
+  const sent = ultraStubs(on)
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  let ui = await $.ui.mount(BAND)
+  expect((await ui.find({ key: 'ultrathink' }))!.text).toBe('⚡ Ultrathink next message')
+  await ui.press({ key: 'ultrathink' })
+  await ui.unmount()
+  // The stubbed redraw doesn't repaint, so draw the band again to see the new state
+  ui = await $.ui.mount(BAND)
+  expect((await ui.find({ key: 'ultrathink' }))!.text).toBe('⚡ Ultrathink next: on')
+  expect(await ui.find({ type: 'Text', text: /your next message runs at xhigh/ })).toBeDefined()
+  await ui.unmount()
+
+  await turn($, 't1', 'the checkout charges twice, find out why', 'low')
+  await turn($, 't2', 'now rename the button', 'low')
+  expect(sent).toEqual([{ turnId: 't1', effort: 'xhigh' }, { turnId: 't2', effort: 'low' }])
+})
+
+test('Ultrathink, pressed while Claude works, raises the rest of that turn', async ($, on) => {
+  const sent = ultraStubs(on)
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.prompt.submit({ text: 'fix the order form' })
+  await $.turn.start({ turnId: 't1' })
+  await step($, 't1', 'medium')
+  let ui = await $.ui.mount(WORKING)
+  expect((await ui.find({ key: 'ultrathink' }))!.text).toBe('⚡ Ultrathink this turn')
+  await ui.press({ key: 'ultrathink' })
+  await ui.unmount()
+  ui = await $.ui.mount(WORKING)
+  expect((await ui.find({ key: 'ultrathink' }))!.text).toBe('⚡ Ultrathinking this turn')
+  expect(await ui.find({ type: 'Text', text: /this turn runs at xhigh/ })).toBeDefined()
+  await ui.unmount()
+  await step($, 't1', 'medium')
+  await $.turn.complete({ turnId: 't1', answer: 'fixed', durationMs: 10, isAborted: false, usage: null })
+  await turn($, 't2', 'thanks, now add a note', 'medium')
+  expect(sent.map((s) => s.effort)).toEqual(['medium', 'xhigh', 'medium'])
+})
+
+test('the Ultrathink button draws in the Desktop app too', async ($, on) => {
+  const sent = ultraStubs(on)
+  await $.session.start({ surface: 'desktop', isInteractive: true, cwd: '/work' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect(await ui.find({ key: 'ultrathink' })).toBeDefined()
+  await ui.press({ key: 'ultrathink' })
+  await ui.unmount()
+  await turn($, 't1', 'redesign the pricing logic', 'medium')
+  expect(sent[0].effort).toBe('xhigh')
+})
+
+test('/ultra arms the next message, and pressing twice cancels', async ($, on) => {
+  const sent = ultraStubs(on)
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  expect(await $.command.run({ command: 'ultra', args: '' })).toEqual({})
+  await turn($, 't1', 'one hard task', 'low')
+  await $.command.run({ command: 'ultra', args: '' })
+  await $.command.run({ command: 'ultra', args: '' })
+  await turn($, 't2', 'an easy task', 'low')
+  expect(sent.map((s) => s.effort)).toEqual(['xhigh', 'low'])
+})
+
+test('Ultrathink never lowers your level, skips models without effort, and waits past slash commands', async ($, on) => {
+  const sent = ultraStubs(on)
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.command.run({ command: 'ultra', args: '' })
+  await turn($, 't1', 'audit everything', 'max')
+  await $.command.run({ command: 'ultra', args: '' })
+  await turn($, 't2', 'an old model task', undefined, 'claude-3-5-haiku')
+  await $.command.run({ command: 'ultra', args: '' })
+  await $.prompt.submit({ text: '/compact' })
+  await turn($, 't3', 'the real hard task', 'low', 'claude-opus-4-6')
+  expect(sent.map((s) => s.effort)).toEqual(['max', undefined, 'high'])
+})
+
+test('a boosted turn runs every main request at xhigh, leaves subagents alone, and waits for a fresh turn', async ($, on) => {
+  const sent = ultraStubs(on)
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.command.run({ command: 'ultra', args: '' })
+  await $.prompt.submit({ text: 'refactor the checkout' })
+  for (const [index, agentId] of [[0, undefined], [1, 'sub-1'], [2, undefined]] as const) {
+    const stream = $.turn.step({ turnId: 't1', index, model: 'claude-opus-5-5', messageCount: 1, effort: 'medium', ...(agentId ? { agentId } : {}) })
+    let s = await stream.next()
+    while (s.done !== true) s = await stream.next()
+  }
+  await $.turn.complete({ turnId: 't1', answer: 'done', durationMs: 10, isAborted: false, usage: null })
+  // Pressed after a message is already sent (and its turn not tracked yet): it arms the next message
+  await $.prompt.submit({ text: 'next' })
+  await $.command.run({ command: 'ultra', args: '' })
+  const late = $.turn.step({ turnId: 't2', index: 3, model: 'claude-opus-5-5', messageCount: 1, effort: 'medium' })
+  let s2 = await late.next()
+  while (s2.done !== true) s2 = await late.next()
+  await $.turn.complete({ turnId: 't2', answer: 'done', durationMs: 10, isAborted: false, usage: null })
+  await turn($, 't3', 'the hard one', 'medium')
+  expect(sent.map((s) => s.effort)).toEqual(['xhigh', 'medium', 'xhigh', 'medium', 'xhigh'])
+})
+
+test('an armed boost goes to the next turn\'s first request, not a late request of an older turn', async ($, on) => {
+  const sent = ultraStubs(on)
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.command.run({ command: 'ultra', args: '' })
+  await $.prompt.submit({ text: 'the hard one' })
+  // A request from a turn already under way arrives first
+  const old = $.turn.step({ turnId: 't0', index: 2, model: 'claude-opus-5-5', messageCount: 1, effort: 'low' })
+  let s = await old.next()
+  while (s.done !== true) s = await old.next()
+  await $.turn.complete({ turnId: 't0', answer: 'done', durationMs: 10, isAborted: false, usage: null })
+  await $.turn.start({ turnId: 't1' })
+  await step($, 't1', 'low')
+  expect(sent.map((x) => [x.turnId, x.effort])).toEqual([['t0', 'low'], ['t1', 'xhigh']])
+})
